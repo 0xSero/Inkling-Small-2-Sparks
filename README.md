@@ -126,6 +126,27 @@ These were learned by breaking hardware, so they are not stylistic advice:
   explained by neither weight traffic nor kernel launches — cross-node collectives
   inside the captured graph are the prime suspect) or a W4A16 MoE decode path.
 
+## Hillclimbing
+
+`bench/hillclimb.py` walks a ladder of single-variable config changes, measuring
+decode, prefill and concurrency at each step and keeping a change only if it beats
+the current best. Coherence is a **hard gate** — an incoherent config scores -1 and
+is reverted regardless of how fast it is, as is any run that detected contention.
+
+```bash
+INKLING_HEAD=<head> INKLING_WORKER=<worker> python3 bench/hillclimb.py measure  # no changes
+INKLING_HEAD=<head> INKLING_WORKER=<worker> python3 bench/hillclimb.py step     # one candidate
+```
+
+It changes **exactly one variable per restart** and refuses candidates that would
+push KV below the ~18.5 GB boot floor, or ask for more context than the KV budget
+covers (`ctx x 17.3GiB/262144`, halved for fp8 KV). Memory-raising candidates are
+deferred unless the host has >=12 GB free. These rails are not decoration: stacking
+three memory changes in one restart is what OOM-killed a node's userspace and cost a
+physical power-cycle.
+
+State in `hillclimb_state.json`, full history in `hillclimb_history.jsonl`.
+
 ## Layout
 
 ```
@@ -134,7 +155,8 @@ deploy/Dockerfile      pinned, reproducible build
 deploy/docker-compose.yml
 deploy/env.example     every tuned value, annotated with why
 deploy/patches/        the two source patches
-bench/                 decode, concurrency, context harnesses
+bench/                 decode, prefill, concurrency, context harnesses
+bench/hillclimb.py     single-variable hillclimb driver, coherence-gated
 docs/DEPLOYMENT.md     full deployment + recovery notes
 docs/TUNING-LOG.md     what was tried, what worked, what failed and why
 ```
