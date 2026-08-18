@@ -1,0 +1,34 @@
+ARG BASE_IMAGE=vllm/vllm-openai@sha256:cec2df507519b5a2c4d9870524f86a2a100fae79cb689d1ce11f3d4da2f4ffad
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.title="Inkling Small SM121 paged-KV runtime" \
+      org.opencontainers.image.base.name="vllm/vllm-openai:nightly-65b7662d3fcb773afaf751ab29ac6960a0cf011d" \
+      ai.local-studio.vllm.commit="65b7662d3fcb773afaf751ab29ac6960a0cf011d" \
+      ai.local-studio.vllm.inkling-multidepth-mtp.commit="0841fed141e9cb18e4464c2b4ec74881cdd90654" \
+      ai.local-studio.flash-attention.commit="a80c4d7b5af32426002c42028a66a78408c273b2"
+
+RUN /usr/bin/python3 -m pip install --no-cache-dir \
+      av==18.0.0 \
+      scipy==1.18.0 \
+      soundfile==0.14.0 \
+      soxr==1.1.0
+
+ADD --checksum=sha256:fefb0dda787761106709110bf056d8ba42abfbf861e70b27e20a1d9f439dd206 \
+    https://github.com/vllm-project/vllm/commit/0841fed141e9cb18e4464c2b4ec74881cdd90654.patch \
+    /tmp/inkling-multidepth-mtp.patch
+
+RUN sed -n '/^diff --git a\/vllm\//,$p' /tmp/inkling-multidepth-mtp.patch \
+      > /tmp/inkling-multidepth-mtp-runtime.patch \
+    && cd /usr/local/lib/python3.12/dist-packages \
+    && patch --batch -p1 < /tmp/inkling-multidepth-mtp-runtime.patch \
+    && rm /tmp/inkling-multidepth-mtp.patch \
+      /tmp/inkling-multidepth-mtp-runtime.patch
+
+COPY image-root/vllm/ /usr/local/lib/python3.12/dist-packages/vllm/
+
+RUN /usr/bin/python3 -m py_compile \
+      /usr/local/lib/python3.12/dist-packages/vllm/models/inkling/nvidia/ops/fa4_rel_attention.py \
+      /usr/local/lib/python3.12/dist-packages/vllm/models/inkling/nvidia/ops/qkvr_prep.py \
+      /usr/local/lib/python3.12/dist-packages/vllm/vllm_flash_attn/cute/interface.py \
+    && ! grep -R "Paged KV not supported on SM 12.0" \
+      /usr/local/lib/python3.12/dist-packages/vllm/vllm_flash_attn/cute

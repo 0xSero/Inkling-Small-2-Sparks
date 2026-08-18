@@ -1,0 +1,33 @@
+name: build-and-push-image
+# Manual only: the image is ~21.6 GB and needs the image-root/ overlay, which is
+# not committed (see docs/DEPLOYMENT.md). Run this from a machine that has it.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: image tag
+        default: v38-pinned
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check image-root present
+        run: |
+          test -d image-root/vllm || {
+            echo "image-root/vllm missing — see docs/DEPLOYMENT.md"; exit 1; }
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/inkling-small-2-sparks:${{ inputs.tag }}
