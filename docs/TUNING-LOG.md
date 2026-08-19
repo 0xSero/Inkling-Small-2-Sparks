@@ -299,3 +299,26 @@ with queued work.
 Prefill dropped ~9% (3238 -> 2941), the one regression. It is outweighed in the
 composite score and prefill measurements carry more run-to-run noise than decode,
 but it is worth re-checking if prefill later becomes the priority.
+
+## 2026-08-19 — BLOCK_SIZE 16 -> 32 (ACCEPTED, hillclimb candidate 3)
+
+Score 1.0801 -> 1.0884. A marginal win, recorded as such.
+
+| metric | 16 | 32 |
+|---|---|---|
+| decode c1 median | 47.12 | **47.68** |
+| prefill peak | 2941 | **3286** |
+| aggregate best | 123.0 | 118.4 |
+| coherent | yes | yes |
+
+Prefill recovered the ~9% regression seen when MAX_NUM_SEQS went to 8 (+11.7%),
+decode edged up 1.2%, aggregate fell 3.7%. Net +0.8% on the composite - inside the
+range where run-to-run noise matters, so treat it as "not worse, probably slightly
+better" rather than a clear win. BLOCK_SIZE=64 is next on the ladder.
+
+Note: BLOCK_SIZE was not present in inkling-small.env at all - docker-compose
+supplies it as ${BLOCK_SIZE:-16}. The first attempt at this candidate silently
+changed nothing, because sed found no line to rewrite. It was caught only because
+set_env now diffs the env file and asserts the intended key actually moved; without
+that, the harness would have "measured" an unchanged config and recorded the noise
+as a verdict on block size.
