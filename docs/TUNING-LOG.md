@@ -322,3 +322,66 @@ changed nothing, because sed found no line to rewrite. It was caught only becaus
 set_env now diffs the env file and asserts the intended key actually moved; without
 that, the harness would have "measured" an unchanged config and recorded the noise
 as a verdict on block size.
+
+## 2026-08-19 — BLOCK_SIZE 32 REVERTED to 16 (scoring error, corrected)
+
+The BLOCK_SIZE=32 acceptance logged above was made by a composite score that did
+**not include peak decode**. Re-examined with peak included:
+
+| | BLK=16 | BLK=32 |
+|---|---|---|
+| decode c1 median | 47.12 | 47.68 |
+| decode c1 **peak** | **64.01** | 50.48 |
+| aggregate | **123.0** | 118.4 |
+| prefill | 2941 | **3286** |
+
+BLOCK_SIZE=32 bought +1.2% median and +11.7% prefill at the cost of **27% of peak
+decode and 3.9% of aggregate**. For a throughput-first objective that trade is
+backwards, so 32 is reverted and **16 is the shipped value**.
+
+The scoring function was re-weighted to match the actual goal:
+aggregate 0.40 / median 0.25 / peak 0.25 / prefill 0.10. Under those weights
+BLK=16 scores 0.9895 vs BLK=32 at 0.9352.
+
+Lesson: an objective that omits a metric you care about will confidently optimise
+it away.
+
+## 2026-08-19 — Ladder exhausted: what is NOT tunable here
+
+| candidate | result |
+|---|---|
+| `BLOCK_SIZE=64` | **crashes the engine**, 2/2 attempts |
+| `KV_CACHE_DTYPE=fp8` | **fails to boot** on this SM121 stack |
+| `KV_CACHE_MEMORY_BYTES=24GB` | OOM — engine capped at 106.5GB by `GPU_MEMORY_UTILIZATION=0.88`, and model+KV already use 103.6GB |
+| `MAX_MODEL_LEN=327680` | needs ~21.6 GiB KV; only ~18.6 GiB fits |
+| `MAX_NUM_BATCHED_TOKENS=16384` | no gain |
+
+**262144 is the context ceiling for Inkling on this hardware.** KV costs a measured
+69.2 KB/token; 1M tokens would need ~74 GB of KV on top of an ~83.6 GB model in a
+121 GB box. Not reachable, with or without fp8.
+
+## 2026-08-19 — DeepSeek-V4-Flash + DSpark comparison (same 2 Sparks)
+
+Deployed `ghcr.io/anemll/dspark-vllm-gx10:0.1.1` with gamma=5 DSpark parallel
+drafting and `nvfp4_ds_mla` KV, to test whether the MTP3 ceiling is a model
+limitation rather than a tuning one. It is.
+
+| metric | Inkling (tuned) | DSpark V4-Flash |
+|---|---|---|
+| c1 decode median | 47.12 | **50.80** |
+| c1 decode peak | **64.01** | 61.15 |
+| aggregate peak | **123.0** (c8) | 102.8 (c4) |
+| c1/c2/c4 aggregate | 34.6 / 62.4 / 78.9 | **45.6 / 72.9 / 102.8** |
+| max context | 262,144 | **500,000** |
+| acceptance ceiling | E<=4.0 (got 3.98) | **E<=6.0 (got 5.94)** |
+
+DSpark reaches 98-100% acceptance at all five draft positions on predictable text,
+which Inkling's serial MTP structurally cannot. Inkling retains the higher peak
+aggregate only because the DSpark recipe caps `--max-num-seqs 6` and c6 already
+regresses to 95.9 (saturated).
+
+**Unreconciled:** the recipe README claims c1 decode 95.9 tok/s and c4 aggregate
+263.7. Measured here: 50.80 and 102.8 — a 1.9-2.6x gap. Their figures are likely
+warm-cache/thinking-mode/chat-endpoint; mine are `/v1/completions`, `ignore_eos`,
+512-token windows over six diverse prompts, idle-gated. Not claiming their number
+until it reproduces.

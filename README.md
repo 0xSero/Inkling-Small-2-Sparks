@@ -22,9 +22,9 @@ That brings the stack up on both nodes with the fast config and smoke-tests it. 
 
 | metric | value |
 |---|---|
-| decode c1 | **43.0 tok/s median · 60.07 tok/s peak** |
+| decode c1 | **47.12 tok/s median · 64.01 tok/s peak** |
 | step time | **64.3 – 66.2 ms** (constant across prompts) |
-| aggregate @ c4 | **123.0 tok/s** |
+| aggregate @ c8 | **123.0 tok/s** |
 | max context | **262,144** (verified serving 234,221 prompt tokens) |
 | coherence | 0 repeated 8-grams, natural EOS on all probes |
 
@@ -32,12 +32,14 @@ Concurrency sweep, 384 tok/stream:
 
 | conc | per-stream median | aggregate |
 |---|---|---|
-| 1 | 37.3 | 37.3 |
-| 2 | 35.3 | 61.5 |
-| 4 | 27.3 | **123.0** |
-| 8 | 20.5 | 82.2 \* |
+| 1 | 34.6 | 34.6 |
+| 2 | 31.2 | 62.4 |
+| 4 | 19.7 | 78.9 |
+| 8 | 15.4 | **123.0** |
 
-\* not a valid c8 — `MAX_NUM_SEQS=4` means 4 run + 4 queue. See *Known-open*.
+Measured at `MAX_NUM_SEQS=8`. An earlier c8 figure of 82.2 was **not** a valid
+measurement: with only 4 slots, 4 requests ran and 4 queued, so aggregate fell
+*below* c4. Raising the slot count is what made c8 real.
 
 ## How it got fast
 
@@ -67,7 +69,7 @@ tok/s = E × 1000 / step_ms          (E = mean MTP acceptance, ≤ num_spec + 1)
 fits every measured row to ~1%. Two consequences worth knowing before tuning:
 
 - **MTP3 ceiling is `4.0 / step`.** At 66.2 ms that is 60.4 tok/s, and we measure
-  60.07 at E=3.98. On predictable prompts there is provably nothing left.
+  64.01 at E=3.98. On predictable prompts there is provably nothing left at MTP3.
 - **More draft depth is not free.** MTP-N verifies N+1 tokens and the MoE reads the
   *union* of their top-6-of-256 experts, so weight traffic grows with depth. MTP4
   measured: acceptance up (E 3.0→3.4), step time 69 → 85–137 ms. Net loss.
