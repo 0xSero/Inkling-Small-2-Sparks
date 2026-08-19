@@ -273,3 +273,29 @@ Decode rate after prefill is unchanged.
 Going higher needs KV, not model changes (`model_max_length` is 1048576): 262144 ctx
 costs 17.3 GiB KV, so ~26 GiB ≈ ~390k. Walk it up **one variable at a time** —
 stacking ctx + KV + seqs in one restart is what OOM-killed the head.
+
+## 2026-08-19 — MAX_NUM_SEQS 4 -> 8 (ACCEPTED, hillclimb candidate 1)
+
+First automated hillclimb result. Score 0.9070 -> 1.0801.
+
+| metric | 4 slots | 8 slots |
+|---|---|---|
+| decode c1 median | 40.64 | **47.12** |
+| decode c1 peak | 60.07 | **64.01** |
+| step | ~66 ms | **65.0 ms** |
+| prefill peak | 3238 | 2941 |
+| aggregate best | 87.9 | **123.0** |
+| coherent | yes | yes |
+
+Aggregate by concurrency: `{1: 34.6, 2: 62.4, 4: 78.9, 8: 123.0}`.
+
+The earlier c8 figure of 82.2 was never a real measurement — with only 4 slots, 4
+requests ran and 4 queued, so "c8" was really c4 plus a queue, and aggregate
+*fell* below c4. With 8 slots throughput scales cleanly to c8 and aggregate rises
+31% over the old c4 peak. Decode c1 improved too, which was not expected from a
+concurrency knob; the likely cause is that the previous baseline shared the box
+with queued work.
+
+Prefill dropped ~9% (3238 -> 2941), the one regression. It is outweighed in the
+composite score and prefill measurements carry more run-to-run noise than decode,
+but it is worth re-checking if prefill later becomes the priority.

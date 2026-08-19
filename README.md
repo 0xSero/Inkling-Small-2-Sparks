@@ -24,7 +24,7 @@ That brings the stack up on both nodes with the fast config and smoke-tests it. 
 |---|---|
 | decode c1 | **43.0 tok/s median · 60.07 tok/s peak** |
 | step time | **64.3 – 66.2 ms** (constant across prompts) |
-| aggregate @ c4 | **94.1 tok/s** |
+| aggregate @ c4 | **123.0 tok/s** |
 | max context | **262,144** (verified serving 234,221 prompt tokens) |
 | coherence | 0 repeated 8-grams, natural EOS on all probes |
 
@@ -34,7 +34,7 @@ Concurrency sweep, 384 tok/stream:
 |---|---|---|
 | 1 | 37.3 | 37.3 |
 | 2 | 35.3 | 61.5 |
-| 4 | 27.3 | **94.1** |
+| 4 | 27.3 | **123.0** |
 | 8 | 20.5 | 82.2 \* |
 
 \* not a valid c8 — `MAX_NUM_SEQS=4` means 4 run + 4 queue. See *Known-open*.
