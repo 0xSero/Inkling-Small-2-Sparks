@@ -149,6 +149,13 @@ physical power-cycle.
 
 State in `hillclimb_state.json`, full history in `hillclimb_history.jsonl`.
 
+## Going higher
+
+64.01 tok/s c1 is the MTP3 wall, not a tuning shortfall: `tok/s = E * 1000/step`
+with `E <= 4.0` caps c1 at 61.5 at the measured 65 ms step. Routes past it —
+a gamma=5 parallel drafter, the draft LM-head quantisation, and the MoE
+expert-gather fix — are in [docs/GOING-HIGHER.md](docs/GOING-HIGHER.md).
+
 ## Layout
 
 ```
