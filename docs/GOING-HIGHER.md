@@ -50,6 +50,44 @@ state and sampled token, so the dependency is genuinely sequential.
 This is the highest-leverage single change: it lifts the ceiling rather than
 chipping at the step.
 
+### ATTEMPTED 2026-08-20 — blocked on vLLM, not on the drafter
+
+The drafter was downloaded and wired in. Two blockers, one solved and one fatal
+for *this* vLLM build:
+
+**Solved — target lacked the EAGLE3 interface.** DSpark needs aux hidden states
+from target layers `[1,6,12,17,23,28,34,39]`, gated behind vLLM's `SupportsEagle3`
+protocol, which Inkling did not implement:
+
+    RuntimeError: Model does not support EAGLE3 interface
+
+`deploy/patches/patch_eagle3_iface_v40.py` adds it — `aux_hidden_state_layers` on
+`InklingModel`, capture inside the decoder-layer loop, and the protocol accessors
+on `_TmlForCausalLMBase`. It builds and gets past this error. Note the caveat in
+the patch header: Inkling defers part of each layer's residual/sconv work via
+`pending`, so the captured state is an approximation of what the drafter trained
+on. That can only lower acceptance, never correctness.
+
+**Fatal — vLLM's DSpark here is DeepSeek-V4-only.** The registry hardwires it:
+
+```python
+"DSparkDraftModel": ("vllm.models.deepseek_v4", "DSparkDeepseekV4ForCausalLM")
+```
+
+and that class reads `n_routed_experts`, `index_topk`, `hc_eps`, `hc_mult` —
+DeepSeek MoE and Lightning-Indexer fields. The RadixArk checkpoint is a **dense
+6-layer Qwen3** drafter with no experts and no indexer. Boot fails walking that
+list (`hc_mult`, then `hc_eps`, ...). Supplying the fields would not help: it
+would construct a DeepSeek MoE draft architecture that cannot match these weights.
+
+The drafter's own tags say `sglang`/`specforge` — it was trained against a live
+SGLang target. Running it needs **either** SGLang, **or** a vLLM-native
+`DSparkDraftModel` class for the Qwen3-style dense drafter. That is a new model
+implementation, not a config change.
+
+Route 1 therefore remains the highest-value change, but its cost is a vLLM model
+port, not a download.
+
 ## Route 2 — the draft path (cuts step_ms)
 
 `draft` is 19.55 ms of 66.91 ms. **Correcting an earlier analysis in this repo:**
