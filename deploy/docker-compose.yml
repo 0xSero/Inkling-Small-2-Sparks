@@ -158,7 +158,7 @@ services:
           --enable-prompt-tokens-details \
           --generation-config vllm \
           --moe-backend "$${MOE_BACKEND}" \
-          --compilation-config '{"cudagraph_capture_sizes":[1,2,3,4,6,8,16]}' \
+          --compilation-config '{"cudagraph_capture_sizes":[1,2,3,4,8,16,32,40,48]}' \
           --kernel-config.enable_flashinfer_autotune=True \
           --limit-mm-per-prompt '{"image":16,"audio":4}' \
           --allowed-local-media-path /media \

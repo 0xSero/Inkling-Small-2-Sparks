@@ -22,24 +22,42 @@ That brings the stack up on both nodes with the fast config and smoke-tests it. 
 
 | metric | value |
 |---|---|
-| decode c1 | **47.12 tok/s median · 64.01 tok/s peak** |
+| decode c1 | **46.78 tok/s median · 64.01 tok/s peak** |
 | step time | **64.3 – 66.2 ms** (constant across prompts) |
-| aggregate @ c8 | **123.0 tok/s** |
+| aggregate @ c48 | **367.4 tok/s** |
 | max context | **262,144** (verified serving 234,221 prompt tokens) |
 | coherence | 0 repeated 8-grams, natural EOS on all probes |
 
-Concurrency sweep, 384 tok/stream:
+Concurrency sweep, 384 tok/stream (each row measured at a slot count ≥ its
+concurrency, with that batch size CUDA-graph-captured):
 
 | conc | per-stream median | aggregate |
 |---|---|---|
 | 1 | 34.6 | 34.6 |
 | 2 | 31.2 | 62.4 |
 | 4 | 19.7 | 78.9 |
-| 8 | 15.4 | **123.0** |
+| 8 | 17.9 | 125.8 |
+| 12 | 13.1 | 156.9 |
+| 16 | 14.9 | 191.1 |
+| 24 | 11.6 | 247.0 |
+| 32 | 9.5 | 272.6 |
+| 40 | 8.4 | 305.1 |
+| 48 | 8.5 | **367.4** |
+| 64 | 7.4 | 358.0 — saturated |
 
-Measured at `MAX_NUM_SEQS=8`. An earlier c8 figure of 82.2 was **not** a valid
-measurement: with only 4 slots, 4 requests ran and 4 queued, so aggregate fell
-*below* c4. Raising the slot count is what made c8 real.
+Two things made the aggregate curve real:
+
+1. **Slot count must cover the concurrency.** With 4 slots, a c8 run queues half
+   its requests and aggregate falls *below* c4 (measured: 82.2). Every row above
+   was taken with `MAX_NUM_SEQS` ≥ the concurrency.
+2. **The batch size must be CUDA-graph-captured.** c12 measured 115.0 tok/s when
+   batch 12 fell outside the capture list, and 156.9 once `12` was added
+   (+36% from capture alone). The shipped config captures
+   `[1,2,3,4,8,16,32,40,48]`.
+
+Saturation is at **c48 ≈ 360–367 tok/s**; c64 gains nothing and per-stream
+drops to 5.6 tok/s minimum. c1 decode is unaffected by the 48-slot config
+(steps stay 65–68 ms).
 
 ## How it got fast
 
