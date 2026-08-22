@@ -59,6 +59,31 @@ Saturation is at **c48 ≈ 360–367 tok/s**; c64 gains nothing and per-stream
 drops to 5.6 tok/s minimum. c1 decode is unaffected by the 48-slot config
 (steps stay 65–68 ms).
 
+## Second profile: 1M context (SGLang + DSpark + FP4 KV)
+
+The vLLM profile above is the **throughput** champion. There is a second,
+independently baked profile for **latency + long context**, built on the
+public `lmsysorg/sglang` GB10 dev image plus the patch set in
+[0112358DEUS/inklingdeus](https://github.com/0112358DEUS/inklingdeus)
+(`KVQUANT=1 ./scripts/bake-image.sh`), serving the same NVFP4 weights with the
+RadixArk-trained DSpark draft head
+(`RadixArk/Inkling-Small-DSpark-Preview`):
+
+| metric | vLLM profile (above) | SGLang 1M profile |
+|---|---|---|
+| max context | 262,144 | **1,048,576** (KV pool 1,319,267 tok, `fp4_mx_block16`) |
+| decode c1 peak | 64.0 | **85.9** |
+| decode c1 median | 46.8 | 44.4 – 47.5 |
+| aggregate | **367.4** @ c48 | ~109 @ c16 |
+| coherence | clean | clean (needle retrieved exactly from a 307,581-token prompt (prefill ~657 tok/s at that depth)) |
+
+Launch: `BLOCK=10 MAXREQ=48 ./scripts/nvfp4-kv-boot.sh <rank>` (worker rank 1
+first). DSpark block-size sweep on this head (trained for block ≤ 15):
+peak climbs 45.8 → 80.7 → **85.9** across block 5 → 7 → 10, then median
+collapses at 15 (35.6) from overdrafting — and large blocks destroy batch
+throughput (aggregate pinned at ~55–61 tok/s at any concurrency), which is why
+the throughput profile stays on vLLM/MTP3.
+
 ## How it got fast
 
 Starting point was 35.4 tok/s. Three changes, each measured:
