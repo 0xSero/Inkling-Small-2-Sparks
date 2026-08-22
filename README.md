@@ -75,14 +75,16 @@ RadixArk-trained DSpark draft head
 | decode c1 peak | 64.0 | **85.9** |
 | decode c1 median | 46.8 | 44.4 – 47.5 |
 | aggregate | **367.4** @ c48 | ~109 @ c16 |
-| coherence | clean | clean (needle retrieved exactly from a 307,581-token prompt (prefill ~657 tok/s at that depth)) |
+| coherence | clean | clean — needle retrieved exactly from a 307,581-token prompt |
 
-Launch: `BLOCK=10 MAXREQ=48 ./scripts/nvfp4-kv-boot.sh <rank>` (worker rank 1
-first). DSpark block-size sweep on this head (trained for block ≤ 15):
-peak climbs 45.8 → 80.7 → **85.9** across block 5 → 7 → 10, then median
-collapses at 15 (35.6) from overdrafting — and large blocks destroy batch
-throughput (aggregate pinned at ~55–61 tok/s at any concurrency), which is why
-the throughput profile stays on vLLM/MTP3.
+Full recipe — image bake, model-directory layout, RoCE/rank setup, and the
+block-size sweep — is in **[docs/SGLANG-1M-PROFILE.md](docs/SGLANG-1M-PROFILE.md)**.
+
+The short version: `BLOCK=10 MAXREQ=48 ./scripts/nvfp4-kv-boot.sh <rank>`, worker
+rank 1 first. DSpark peak climbs 45.8 → 80.7 → **85.9** across block 5 → 7 → 10,
+then the median collapses at 15 (35.6) from overdrafting. Large blocks also pin
+aggregate at ~55–61 tok/s at *any* concurrency, which is why the throughput
+profile stays on vLLM/MTP3.
 
 ## How it got fast
 
@@ -164,12 +166,15 @@ These were learned by breaking hardware, so they are not stylistic advice:
 
 ## Known-open
 
-- **c8 unmeasured** — needs `MAX_NUM_SEQS=8`, changed alone.
-- **Context > 262144** is KV-bound, not model-bound (`model_max_length` is 1048576).
-  262144 costs 17.3 GiB, so ~26 GiB ≈ ~390k. Walk it up in steps.
-- **Past 60 tok/s c1** needs either the draft path (19.55 ms of 66.91 ms, ~85% of it
-  explained by neither weight traffic nor kernel launches — cross-node collectives
-  inside the captured graph are the prime suspect) or a W4A16 MoE decode path.
+- **Context > 262144 under vLLM** is KV-bound, not model-bound (`model_max_length`
+  is 1048576): 262144 costs 17.3 GiB of BF16 KV. Solved in the other direction by
+  the SGLang profile, whose FP4 KV holds 1,319,267 tokens — see
+  [docs/SGLANG-1M-PROFILE.md](docs/SGLANG-1M-PROFILE.md).
+- **Past 64 tok/s c1 under vLLM** needs either the draft path (19.55 ms of 66.91 ms;
+  a large share is unexplained by weight traffic or kernel launches, with cross-node
+  collectives inside the captured graph the prime suspect) or a W4A16 MoE decode
+  path. **Answered on the other stack**: the SGLang profile's trained DSpark head
+  reaches 85.9 tok/s c1 peak.
 
 ## Hillclimbing
 
@@ -194,10 +199,14 @@ State in `hillclimb_state.json`, full history in `hillclimb_history.jsonl`.
 
 ## Going higher
 
-64.01 tok/s c1 is the MTP3 wall, not a tuning shortfall: `tok/s = E * 1000/step`
-with `E <= 4.0` caps c1 at 61.5 at the measured 65 ms step. Routes past it —
-a gamma=5 parallel drafter, the draft LM-head quantisation, and the MoE
-expert-gather fix — are in [docs/GOING-HIGHER.md](docs/GOING-HIGHER.md).
+64.01 tok/s c1 is the MTP3 wall **for the vLLM profile**, not a tuning shortfall:
+`tok/s = E * 1000/step` with `E <= 4.0` caps c1 at 61.5 at the measured 65 ms step.
+
+The wall was cleared by changing drafters rather than tuning: the SGLang profile's
+trained DSpark head (block 10) reaches **85.9 tok/s** c1 peak — see
+[docs/SGLANG-1M-PROFILE.md](docs/SGLANG-1M-PROFILE.md). Remaining routes for the
+vLLM lane — the draft LM-head quantisation and the MoE expert-gather fix — are in
+[docs/GOING-HIGHER.md](docs/GOING-HIGHER.md).
 
 ## Layout
 
@@ -208,9 +217,11 @@ deploy/docker-compose.yml
 deploy/env.example     every tuned value, annotated with why
 deploy/patches/        the two source patches
 bench/                 decode, prefill, concurrency, context harnesses
+bench/probe_longctx.py needle-in-a-haystack probe for the 1M profile
 bench/hillclimb.py     single-variable hillclimb driver, coherence-gated
 docs/DEPLOYMENT.md     full deployment + recovery notes
 docs/TUNING-LOG.md     what was tried, what worked, what failed and why
+docs/SGLANG-1M-PROFILE.md  the 1M-context / high-peak second profile, end to end
 ```
 
 ## License

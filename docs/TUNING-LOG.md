@@ -385,3 +385,59 @@ regresses to 95.9 (saturated).
 warm-cache/thinking-mode/chat-endpoint; mine are `/v1/completions`, `ignore_eos`,
 512-token windows over six diverse prompts, idle-gated. Not claiming their number
 until it reproduces.
+
+---
+
+## 2026-08-21/22 — aggregate 123 → 367, and a second profile at 1M context
+
+### vLLM lane: the aggregate was never GPU-bound, it was slot- and capture-bound
+
+| change | c1 peak | aggregate | verdict |
+|---|---|---|---|
+| `MAX_NUM_SEQS=8` (start of session) | 64.01 | 123.0 @ c8 | prior champion |
+| `MAX_NUM_SEQS=12` | 59.4 | 140.4 @ c10 | accept |
+| + capture sizes `10,12` | 57.4 | 156.9 @ c12 | accept — **+36% from capture alone** |
+| `MAX_NUM_SEQS=16`, capture → 16 | 58.3 | 191.1 @ c16 | accept |
+| `MAX_NUM_SEQS=24`, capture → 24 | 58.3 | 238.2 @ c24 | accept |
+| `MAX_NUM_SEQS=32`, capture → 32 | 57.6 | 272.6 @ c32 | accept |
+| **`MAX_NUM_SEQS=48`, capture → 48** | 57.0 | **367.4 @ c48** | **champion** |
+| `MAX_NUM_SEQS=64`, capture → 64 | 53.4 | 358.0 @ c64 | reject — saturated |
+
+Two independent failures had been masking the batch throughput of this box:
+
+1. A concurrency run at c*N* with fewer than *N* slots silently measures a
+   queue, not a batch. The old c8=123.0 was real but c8=82.2 (at 4 slots) was
+   not, and neither was the shape of the curve.
+2. A batch size outside `cudagraph_capture_sizes` falls back to eager. c12
+   measured 115.0 uncaptured and 156.9 captured — same engine, same slots.
+
+c1 decode is *unaffected* by 48 slots (steps stay 65–68 ms), so this is free.
+Saturation is genuine at c48: c64 adds nothing and halves per-stream minimum.
+
+Host RAM stays ~115/121 GB throughout; the capture list was swapped rather than
+extended past 32 slots to keep graph memory flat.
+
+### SGLang lane: found the trained DSpark head already on disk
+
+`RadixArk/Inkling-Small-DSpark-Preview` was sitting in the head node's HF cache.
+Under vLLM it is unloadable (registry maps `DSparkDraftModel` at
+`deepseek_v4`, demanding `n_routed_experts`/`index_topk`/`hc_eps`/`hc_mult` —
+forcing them builds the wrong architecture). Under SGLang + the inklingdeus
+patches it loads as trained.
+
+Result: **85.9 tok/s c1 peak** — past the MTP3 ceiling that `tok/s = E·1000/step`
+made unbeatable on the vLLM lane — and **1,048,576 context** with a KV pool of
+1,319,267 tokens. Needle retrieved exactly from a 307,581-token prompt.
+
+Block-size sweep (the head is trained to 15; hardware optimum is 10):
+peak 45.8 → 80.7 → 85.9 at block 5 → 7 → 10, median collapses to 35.6 at 15.
+At block 15 aggregate is pinned ~55–61 tok/s at *any* concurrency — the drafter
+burns the GPU on rejected tokens — which is why the throughput profile stays
+on vLLM/MTP3. Full recipe: `docs/SGLANG-1M-PROFILE.md`.
+
+### Two profiles, deliberately
+
+Neither stack wins outright, so both are documented rather than one being
+crowned: vLLM for many concurrent streams (367.4 aggregate, 262k ctx), SGLang
+for long documents and single-user latency (85.9 peak, 1M ctx, but ~109
+aggregate and ~8 min prefill on a 300k-token prompt).
